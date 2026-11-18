@@ -158,7 +158,7 @@ export default function Landing() {
         <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-4 py-8 text-sm text-slate-500 sm:flex-row sm:px-6">
           <Logo />
           <p>Built with React, Supabase pgvector, LangChain.js & Groq.</p>
-          <a href="https://github.com/" target="_blank" rel="noreferrer" className="flex items-center gap-2 hover:text-white">
+          <a href="https://github.com/Virus2hell/DocMind" target="_blank" rel="noreferrer" className="flex items-center gap-2 hover:text-white">
             <CodeXml className="h-4 w-4" /> Source
           </a>
         </div>
