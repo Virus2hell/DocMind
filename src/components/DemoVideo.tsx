@@ -28,16 +28,18 @@ export function DemoVideo() {
         <div className="aspect-video">
           {hasVideo ? (
             <video
-              className="h-full w-full object-cover"
-              src="/demo.mp4"
-              poster="/demo-poster.jpg"
-              autoPlay
-              muted
-              loop
-              playsInline
-              controls
-              onError={() => setHasVideo(false)}
-            />
+            className="h-full w-full object-cover"
+            src="/demo.mp4"
+            poster="/demo-poster.jpg"
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="auto"
+            disablePictureInPicture
+            disableRemotePlayback
+            onError={() => setHasVideo(false)}
+          />
           ) : (
             <MockApp />
           )}
