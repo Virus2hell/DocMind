@@ -1,0 +1,18 @@
+# Render Blueprint: deploys the Vite app as a free static site.
+# Render → New → Blueprint → pick this repo. You'll be asked for the two env vars.
+services:
+  - type: web
+    name: docmind
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    # Single-page app: send every route (e.g. /app/doc/123) to index.html
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false

@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+/* ---------- Design tokens (use as bg-ink-900, text-brand-400, etc.) ---------- */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-ink-950: #07080f;
+  --color-ink-900: #0c0e1a;
+  --color-ink-800: #131627;
+  --color-ink-700: #1c2036;
+  --color-ink-600: #2a2f4a;
+
+  --color-brand-300: #c4b5fd;
+  --color-brand-400: #a78bfa;
+  --color-brand-500: #8b5cf6;
+  --color-brand-600: #7c3aed;
+  --color-accent-400: #22d3ee;
+
+  --animate-fade-up: fade-up 0.6s ease-out both;
+  --animate-blink: blink 1s steps(2) infinite;
+
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-ink-950 text-slate-200 antialiased;
+  font-family: var(--font-sans);
+}
+
+/* ---------- Reusable pieces ---------- */
+@utility card {
+  @apply rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-sm;
+}
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition
+    disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400;
+}
+@utility btn-primary {
+  @apply btn bg-gradient-to-r from-brand-600 to-brand-500 text-white shadow-lg shadow-brand-600/25 hover:from-brand-500 hover:to-brand-400;
+}
+@utility btn-ghost {
+  @apply btn border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10;
+}
+@utility input {
+  @apply w-full rounded-xl border border-white/10 bg-ink-900 px-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-500
+    focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30;
+}
+@utility gradient-text {
+  @apply bg-gradient-to-r from-brand-300 via-brand-400 to-accent-400 bg-clip-text text-transparent;
+}
+.glow {
+  background:
+    radial-gradient(600px circle at 20% 0%, rgb(139 92 246 / 0.18), transparent 60%),
+    radial-gradient(500px circle at 85% 10%, rgb(34 211 238 / 0.12), transparent 60%);
+}
+.grid-bg {
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse at top, black 30%, transparent 75%);
+}
+
+/* ---------- Markdown inside chat answers ---------- */
+.markdown { @apply text-sm leading-relaxed text-slate-200; }
+.markdown p { @apply my-2; }
+.markdown ul { @apply my-2 list-disc pl-5; }
+.markdown ol { @apply my-2 list-decimal pl-5; }
+.markdown li { @apply my-1; }
+.markdown strong { @apply font-semibold text-white; }
+.markdown code { @apply rounded bg-white/10 px-1.5 py-0.5 text-[0.85em]; }
+.markdown h1, .markdown h2, .markdown h3 { @apply mt-3 mb-1 font-semibold text-white; }
+
+/* Thin scrollbars */
+* { scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / 0.15) transparent; }
