@@ -1,155 +1,151 @@
-# DocMind: Chat with your PDF + Q&A Generator
+# DocMind
 
-An AI study assistant built on a real **RAG (Retrieval-Augmented Generation)** pipeline.
+**Chat with your PDFs and turn them into question banks.**
 
-1. **Chat mode**: upload a PDF and ask questions. Answers come only from the PDF and cite page numbers.
-2. **Q&A mode**: generate **10 / 15 / 20 / 25 / 30** questions with answers (short answer, MCQ, true/false or mixed; easy, medium or hard). If the PDF can't support that many good questions, you get the ones that could be made, plus a message saying how many. Download the set as a **PDF**.
+🔗 **Live demo:** [docmind.vercel.app](https://doc-mind-tan.vercel.app/) (no sign-up needed, just click *Continue as guest*)
 
-**Stack:** React · Vite · TypeScript · Tailwind CSS · Supabase (Postgres + pgvector + Auth + Edge Functions) · LangChain.js · Groq (LLM) · gte-small (embeddings)
+I built DocMind because re-reading long notes before exams is slow. You upload a PDF and either ask it questions, with every answer pointing back to the page it came from, or generate a set of practice questions with answers that you can download as a PDF.
+
+Under the hood it's a full **RAG (Retrieval-Augmented Generation)** pipeline: PDF parsing, chunking, embeddings, vector search and an LLM, with each user's data isolated from everyone else's.
 
 ---
 
-## 1. How it works
+## Features
 
-### Ingestion (once per PDF)
+**💬 Chat with a PDF**
+- Ask anything about the document and get an answer that streams in live
+- Every answer cites its source pages, e.g. *(p. 4)*, so you can check it
+- If something isn't in the document, it says so instead of making it up
+- Follow-up questions work ("what about the second one?")
+
+**📝 Q&A Generator**
+- Generate **10, 15, 20, 25 or 30** questions with answers
+- Question types: **short answer, multiple choice, true/false, or mixed**
+- Difficulty: **easy, medium or hard**
+- Option to generate from a **page range** only (e.g. one chapter)
+- **Honest generation:** if a PDF can't support 30 good questions, you get the ones that could be made, with a message like *"Only 12 questions could be generated from this PDF"*. No padding, no invented facts
+- **Study mode** hides the answers so you can test yourself
+- **Download as PDF:** a clean, printable sheet with each answer and its page reference
+- Previously generated sets are saved per document
+
+**🔐 Accounts**
+- Email sign-up, or one-click guest access
+- Your documents are private to your account (enforced in the database with Row Level Security)
+
+---
+
+## Tech Stack
+
+| Layer | Tech |
+|---|---|
+| Frontend | React, Vite, TypeScript, Tailwind CSS |
+| PDF handling | pdf.js (text extraction), jsPDF (export) |
+| AI orchestration | LangChain.js |
+| LLM | Groq (`gpt-oss-120b` for answers and questions, `gpt-oss-20b` for query rewriting) |
+| Embeddings | gte-small (384-dim), running inside Supabase Edge Functions |
+| Database | Supabase Postgres + **pgvector** (HNSW index) |
+| Backend | Supabase Edge Functions (Deno) |
+| Auth | Supabase Auth (email + anonymous) |
+| Hosting | Vercel (frontend), Supabase (backend) |
+
+---
+
+## How it works
+
+### 1. Ingestion: turning a PDF into searchable vectors
 ```
 Browser                                         Supabase
 ───────                                         ────────
 PDF ─► pdf.js extracts text page by page
     ─► LangChain splitter → ~1000-char chunks (each keeps its page number)
-    ─► insert row in `documents`  ──────────────► documents table
+    ─► create a row in `documents`  ────────────► documents table
     ─► send chunks in batches of 16 ────────────► Edge Function `ingest`
-                                                    └─ gte-small embedding (384 numbers per chunk)
-                                                    └─ insert into `chunks` (pgvector column)
+                                                    └─ gte-small embedding per chunk
+                                                    └─ stored in `chunks` (pgvector)
 ```
-The PDF is parsed **in the browser**, so the server never handles PDF files. Sending chunks in small batches keeps each request fast and drives the progress bar.
+I parse the PDF **in the browser**, so the server never handles raw files. Sending chunks in small batches keeps each request short and lets the UI show real progress.
 
-### Chat (the "RAG" part)
+### 2. Chat: retrieval-augmented generation
 ```
 Question ─► Edge Function `chat`
-             1. follow-up? rewrite it as a standalone question (small Groq model)
+             1. if it's a follow-up, rewrite it as a standalone question
              2. embed the question with gte-small
-             3. match_chunks(): pgvector finds the 6 most similar chunks of THIS document
-             4. Groq LLM answers using ONLY those chunks and cites (p. N)
-             5. streams back: sources first, then tokens  ─► UI renders live
+             3. pgvector finds the 6 most similar chunks of this document
+             4. the LLM answers using ONLY those chunks and cites pages
+             5. the response streams back: sources first, then tokens
 ```
-**Why retrieval?** The LLM never reads the whole PDF, only the few chunks most relevant to the question. That's why this works on long documents and why answers can cite pages.
+The model never sees the whole PDF, only the few chunks relevant to the question. That keeps it fast and cheap, and it's what makes page citations possible.
 
-### Q&A generation (map-reduce, not RAG)
-Questions must cover the **whole** document, not just the chunks similar to one query:
+### 3. Q&A generation: map-reduce
+Plain RAG doesn't work for this. Questions need to cover the *whole* document, not just the parts that match a single query, so I used a map-reduce approach:
 ```
-PLAN    split the chunks into sections (≈10 chunks each, max 8 sections)
+PLAN    split the document (or the chosen page range) into sections
 MAP     for each section → Edge Function `generate-qa`
-          "Write UP TO k questions using ONLY this text. Return fewer if the text can't support more."
-          JSON mode + validation (MCQ answer must be one of the options, etc.)
-          already-generated questions are passed in so the model doesn't repeat them
-REDUCE  remove near-duplicates (Jaccard similarity) → pick round-robin across sections
-        (so the whole PDF is covered) → sort by page → trim to N
-RESULT  if fewer than N → "Only X questions could be generated from this PDF"
+          "Write UP TO k questions using ONLY this text. Return fewer if it can't support more."
+          JSON output, validated (e.g. an MCQ answer must be one of its options)
+          questions already generated are passed along to avoid repeats
+REDUCE  remove near-duplicates (Jaccard similarity on keywords)
+        → pick round-robin across sections so the whole document is covered
+        → sort by page → trim to the requested number
 ```
-Sections are processed **one at a time** to stay under Groq's free-tier rate limits. If a request is rate-limited (HTTP 429), the app waits and retries automatically, and the UI shows the wait.
-
-### Security
-- The **Groq key lives only in Supabase secrets**. The browser never sees it.
-- **Row Level Security**: every table has `user_id = auth.uid()` policies, and the Edge Functions run *as the user* (they forward the user's JWT), so nobody can read anyone else's documents.
+Sections run one after another to stay inside Groq's free-tier rate limits. If a request gets rate-limited, the app waits and retries automatically and shows that in the UI.
 
 ---
 
-## 2. Project structure
+## Design decisions
+
+- **Embeddings inside Supabase:** Groq doesn't offer embedding models, so I used Supabase's built-in `gte-small`. That meant no extra API key, no extra cost, and the embeddings are created right next to the database.
+- **Allowing the model to return fewer questions:** LLMs pad lists with weak or made-up questions when they're forced to hit a number. Letting the model return fewer, and counting the result in code, gave noticeably better questions.
+- **Security by default:** the LLM key exists only as a server-side secret. Edge Functions run *as the signed-in user* (they forward the user's JWT), so Row Level Security applies everywhere, even inside the vector search function.
+- **Streaming with sources first:** the chat endpoint sends newline-delimited JSON. The sources arrive first and then the answer token by token, so the citation chips can appear before the answer finishes.
+- **Lazy loading:** pdf.js and jsPDF are large libraries, so they're only loaded on the app pages. The landing page stays light.
+
+---
+
+## Project structure
 
 ```
 docmind/
-├── index.html                  # HTML shell, fonts, page title
-├── vite.config.ts              # Vite + React + Tailwind plugins
-├── .env.example                # copy to .env.local → Supabase URL + anon key
-├── vercel.json                 # SPA routing for Vercel  (public/_redirects = Netlify)
-├── public/
-│   ├── favicon.svg
-│   └── demo.mp4                # ← YOUR demo video goes here (see section 6)
+├── src/                          # Frontend
+│   ├── pages/                    # Landing, Login, Dashboard, DocumentPage
+│   ├── components/               # ChatPanel, QAPanel, QAList, UploadDropzone, DemoVideo…
+│   ├── context/AuthContext.tsx   # Supabase session
+│   └── lib/
+│       ├── pdf.ts                # pdf.js → text per page
+│       ├── chunk.ts              # LangChain text splitter
+│       ├── api.ts                # upload pipeline, streaming chat, retries
+│       ├── qa.ts                 # Q&A map-reduce: plan, generate, dedupe, trim
+│       └── exportPdf.ts          # Q&A → downloadable PDF
 │
-├── src/                        # ───────── FRONTEND ─────────
-│   ├── main.tsx                # React entry
-│   ├── App.tsx                 # routes: / , /login , /app , /app/doc/:id
-│   ├── index.css               # Tailwind + design tokens (colors, buttons, cards)
-│   ├── types.ts                # shared TypeScript types
-│   ├── context/AuthContext.tsx # current Supabase session
-│   ├── lib/
-│   │   ├── supabase.ts         # Supabase client
-│   │   ├── pdf.ts              # pdf.js → text per page
-│   │   ├── chunk.ts            # LangChain RecursiveCharacterTextSplitter
-│   │   ├── api.ts              # upload pipeline, streaming chat, DB calls, retries
-│   │   ├── qa.ts               # Q&A map-reduce: plan sections, call, dedupe, trim
-│   │   └── exportPdf.ts        # jsPDF → downloadable Q&A PDF
-│   ├── components/
-│   │   ├── DemoVideo.tsx       # hero video (falls back to an animated mock)
-│   │   ├── UploadDropzone.tsx  # drag & drop + progress bar
-│   │   ├── ChatPanel.tsx       # chat UI, streaming, source chips
-│   │   ├── QAPanel.tsx         # Q&A settings, progress, results, history
-│   │   ├── QAList.tsx          # question cards, MCQ options, reveal answers
-│   │   └── AppHeader, Logo, Spinner, ProtectedRoute
-│   └── pages/
-│       ├── Landing.tsx         # hero + demo video + how it works + features
-│       ├── Login.tsx           # email/password + "Continue as guest"
-│       ├── Dashboard.tsx       # upload + document list
-│       └── DocumentPage.tsx    # tabs: Chat | Generate Q&A
-│
-└── supabase/                   # ───────── BACKEND ─────────
-    ├── config.toml
-    ├── migrations/0001_init.sql   # tables, pgvector, HNSW index, RLS, match_chunks()
-    └── functions/                 # Deno Edge Functions
-        ├── _shared/               # cors, user-scoped client, gte-small embed, Groq LLM
-        ├── ingest/index.ts        # embed + store chunks
-        ├── chat/index.ts          # RAG chat, streamed as NDJSON
-        └── generate-qa/index.ts   # Q&A for one section (the MAP step)
+└── supabase/                     # Backend
+    ├── migrations/0001_init.sql  # tables, pgvector, HNSW index, RLS, match_chunks()
+    └── functions/
+        ├── _shared/              # CORS, user-scoped client, embeddings, LLM setup
+        ├── ingest/               # embed + store chunks
+        ├── chat/                 # RAG chat (streaming)
+        └── generate-qa/          # question generation for one section
 ```
 
 ---
 
-## 3. Setup, step by step
+## Limitations
 
-### Prerequisites
-- **Node.js 20+** (`node -v`)
-- A free **Supabase** account → https://supabase.com
-- A free **Groq** API key → https://console.groq.com/keys
+- Supports text-based PDFs up to **60 pages / 20 MB**. Scanned PDFs (images only) need OCR, which isn't supported yet.
+- The exported PDF uses a Latin-only font, so non-English scripts may not render correctly.
+- Runs on Groq's free tier, so heavy use can hit rate limits (the app retries automatically).
 
-### Step 1: Install the frontend
-```bash
-cd docmind
-npm install
-cp .env.example .env.local
-```
+## What I'd add next
 
-### Step 2: Create the Supabase project
-1. Supabase Dashboard → **New project** (pick a region near you, save the DB password).
-2. **Project Settings → API**: copy the **Project URL** and the **anon / publishable key** into `.env.local`.
+- **Quiz mode** where you type an answer, the LLM grades it, and you get a score at the end
+- **Hybrid search** (keyword + vector) for better results on names and numbers
+- **Re-ranking** of retrieved chunks
+- **Chat across multiple PDFs** at once
+- **Export to Anki / CSV** for flashcards
+- A small **evaluation set** to measure how often the right page is retrieved
 
-### Step 3: Create the database
-Dashboard → **SQL Editor** → **New query** → paste all of `supabase/migrations/0001_init.sql` → **Run**.
-You should see the tables `documents`, `chunks` and `qa_sets` under **Table Editor**.
+---
 
-### Step 4: Turn on auth options
-Dashboard → **Authentication → Sign In / Providers**:
-- Enable **Allow anonymous sign-ins**. This powers the "Continue as guest" button, which recruiters will love.
-- Under **Email**, optionally turn off **Confirm email** while developing.
+## Author
 
-### Step 5: Deploy the Edge Functions
-```bash
-npx supabase login
-npx supabase link --project-ref YOUR_PROJECT_REF      # the "xxxx" in https://xxxx.supabase.co
-npx supabase secrets set GROQ_API_KEY=gsk_your_key_here
-npx supabase functions deploy
-```
-If deploy complains about Docker, run `npx supabase functions deploy --use-api`.
-
-Optional: change models (check https://console.groq.com/docs/models for current names):
-```bash
-npx supabase secrets set GROQ_MODEL=llama-3.3-70b-versatile GROQ_FAST_MODEL=llama-3.1-8b-instant
-```
-
-### Step 6: Run it
-```bash
-npm run dev
-```
-Open http://localhost:5173 → **Try it free** → **Continue as guest** → upload a PDF.
-
-
+**Atharva Narvekar**
+[GitHub](https://github.com/Virus2hell) · [LinkedIn](https://www.linkedin.com/in/atharva-narvekar-8535862b1/)
